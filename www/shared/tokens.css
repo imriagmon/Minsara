@@ -37,15 +37,16 @@ html { touch-action: manipulation; }
     --faint:    #444444;
     --dim:      #777777;
     --text:     #dfdfdf;
-    --accent:   #b9aad8;
+    --accent:   #9b7fd0;
     --danger:   #ff6159;
 
-    /* MINSARA highlight: a muted rainbow for active/selected states. Used as a
+    /* MINSARA highlight: a rainbow for active/selected states. Used as a
        gradient border (padding-box/border-box) or border-image, never painted
        over the picture. --accent above is its solid stand-in for text, focus
        rings and dots, where a gradient cannot be drawn. Not brandable. */
-    --accent-rainbow:   linear-gradient(90deg,  #d4a5a5, #d9b994, #d3cd9c, #a9c6a2, #98c1c3, #a3b3d8, #bda8d6);
-    --accent-rainbow-v: linear-gradient(180deg, #d4a5a5, #d9b994, #d3cd9c, #a9c6a2, #98c1c3, #a3b3d8, #bda8d6);
+    --accent-rainbow:   linear-gradient(90deg,  #c4626e, #cd7f45, #c2a640, #5fa25c, #3a9aa0, #5277c4, #8f62c6);
+    --bw-rainbow:       2.5px;   /* width of every rainbow outline/underline */
+    --accent-rainbow-v: linear-gradient(180deg, #c4626e, #cd7f45, #c2a640, #5fa25c, #3a9aa0, #5277c4, #8f62c6);
     --green:    #28c941;
 
     /* Semantic blue. Not brandable — used for informational badges only. */

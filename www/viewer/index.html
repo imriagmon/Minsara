@@ -92,7 +92,7 @@ html, body { overflow: hidden; }
 }
 .conf-prompt-btn:hover { border-color: var(--dim); background: var(--bg); }
 .conf-prompt-btn:focus-visible { outline: none; box-shadow: var(--ring-accent); border-color: var(--accent); }
-.conf-prompt-btn.pref-saved { border-color: transparent; color: var(--text); background: linear-gradient(var(--surface2), var(--surface2)) padding-box, var(--accent-rainbow) border-box; }
+.conf-prompt-btn.pref-saved { border-color: transparent; color: var(--text); background: linear-gradient(var(--surface2), var(--surface2)) padding-box, var(--accent-rainbow) border-box; border-width: var(--bw-rainbow); }
 .conf-prompt-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 .conf-prompt-skip {
     background: none; color: var(--dim); border-color: transparent;
@@ -495,7 +495,7 @@ body.stage-morphing .tile.is-morphing {
     transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .panel-tab:hover { color: var(--text); }
-.panel-tab.is-active { color: var(--text); border-image: var(--accent-rainbow) 1; }
+.panel-tab.is-active { color: var(--text); border-image: var(--accent-rainbow) 1; border-bottom-width: var(--bw-rainbow); }
 .panel-tab:focus-visible { outline: none; box-shadow: var(--ring-accent); border-radius: var(--r-inset); }
 .panel-tab.has-notification::after {
     content: ''; position: absolute; top: 0; right: -2px;
@@ -780,7 +780,7 @@ body.has-focus.strip-hidden #stage-strip {
 #chat-messages { flex: 1; overflow-y: auto; padding: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-3); }
 .chat-msg { display: flex; flex-direction: column; gap: 2px; padding-left: 0; border-left: var(--bw-accent) solid transparent; padding: 2px 0 2px var(--sp-2); margin-left: calc(var(--sp-2) * -1); transition: border-color var(--dur-fast) var(--ease-out); }
 /* Presenter messages get a subtle left accent bar — glanceable without full bubble noise. */
-.chat-msg:has(.chat-who.presenter) { border-image: var(--accent-rainbow-v) 1; }
+.chat-msg:has(.chat-who.presenter) { border-image: var(--accent-rainbow-v) 1; border-left-width: var(--bw-rainbow); }
 .chat-meta { display: flex; align-items: baseline; gap: 6px; }
 .chat-who { font-size: var(--fs-xs); font-weight: var(--fw-bold); }
 .chat-who.presenter { color: var(--accent); }
@@ -963,7 +963,7 @@ body.has-focus.strip-hidden #stage-strip {
 #more-sheet .tb-sep { display: none; }
 /* Compact pill drops its in-pill dividers (some bound a moved-out group). */
 #bottom-toolbar.compact > .tb-sep { display: none; }
-#more-btn.active { border-color: transparent; color: var(--text); background: linear-gradient(var(--surface2), var(--surface2)) padding-box, var(--accent-rainbow) border-box; }
+#more-btn.active { border-color: transparent; color: var(--text); background: linear-gradient(var(--surface2), var(--surface2)) padding-box, var(--accent-rainbow) border-box; border-width: var(--bw-rainbow); }
 
 .tb-btn {
     width: 42px; height: 42px; flex-shrink: 0;
@@ -978,7 +978,7 @@ body.has-focus.strip-hidden #stage-strip {
 .tb-btn:hover { border-color: var(--dim); color: var(--text); }
 .tb-btn.active { border-color: var(--green); color: var(--green); }
 .tb-btn.muted { border-color: var(--danger); color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
-.tb-btn.panel-open { border-color: transparent; color: var(--text); background: linear-gradient(var(--surface2), var(--surface2)) padding-box, var(--accent-rainbow) border-box; }
+.tb-btn.panel-open { border-color: transparent; color: var(--text); background: linear-gradient(var(--surface2), var(--surface2)) padding-box, var(--accent-rainbow) border-box; border-width: var(--bw-rainbow); }
 .tb-btn:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
 .tb-btn.has-notification::after { content: ''; position: absolute; top: 6px; right: 6px; width: var(--sp-2); height: var(--sp-2); border-radius: var(--r-circle); background: var(--accent); animation: dot-pulse 1.5s ease-in-out infinite; }
 /* Force-mute alert: smooth glow that fades in and out on the mic button.
