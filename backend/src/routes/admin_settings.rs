@@ -1,6 +1,7 @@
-//! Authenticated credential management for the single admin: password
-//! change, TOTP enrolment, and passkey (WebAuthn) registration. Mounted at
-//! `/api/admin/settings`; every handler requires `AdminAuth`.
+//! Authenticated settings for the single admin: password change, TOTP
+//! enrolment, passkey (WebAuthn) registration, and the studio timezone.
+//! Mounted at `/api/admin/settings`; every handler requires `AdminAuth`, and
+//! every change to a sign-in factor also goes through [`reauthenticate`].
 
 use axum::{
     extract::{Path, State},
@@ -107,7 +108,7 @@ async fn change_password(
         &state.config.jwt_secret,
         version,
         crate::auth::ADMIN_TOKEN_TTL_SECS,
-    )?;
+    );
     Ok(Json(json!({ "ok": true, "token": token })))
 }
 
@@ -134,8 +135,53 @@ async fn sign_out_everywhere(
         &state.config.jwt_secret,
         version,
         crate::auth::ADMIN_TOKEN_TTL_SECS,
-    )?;
+    );
     Ok(Json(json!({ "ok": true, "token": token })))
+}
+
+// ---- re-authentication ----------------------------------------------------
+
+/// The proof a change to the account's sign-in factors has to carry.
+#[derive(Deserialize)]
+struct Reauth {
+    password: String,
+    /// Current TOTP code, or one of the one-time recovery codes. Only read
+    /// while TOTP is enabled.
+    #[serde(default)]
+    code: Option<String>,
+}
+
+/// Re-prove the full login — the password, plus a current TOTP or recovery
+/// code while TOTP is enabled — before adding or removing a way to sign in.
+///
+/// `AdminAuth` proves possession of a session token, and a session is
+/// revocable where a factor is not. Enrolment used to need the token alone, so
+/// a stolen one could register its own passkey — a login that outlives a
+/// password change and "Sign out other devices", and skips TOTP, since passkey
+/// sign-in does — or bind TOTP to an authenticator the operator does not hold,
+/// locking them out of password sign-in. So these handlers ask for what a
+/// sign-in asks for. Both refusals are 403, never 401: the session is fine, and
+/// the admin SPA signs out on any 401.
+async fn reauthenticate(state: &AppState, proof: Reauth) -> Result<(), AppError> {
+    if !cred::verify_password(state, proof.password).await? {
+        return Err(AppError::Forbidden("Wrong password".into()));
+    }
+    let conn = state.db.get()?;
+    let totp_enabled =
+        tokio::task::spawn_blocking(move || cred::settings_get(&conn, cred::KEY_TOTP_ENABLED))
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .as_deref()
+            == Some("1");
+    if totp_enabled {
+        let code = proof.code.unwrap_or_default();
+        if !cred::verify_totp_or_recovery(state, &code).await? {
+            return Err(AppError::Forbidden(
+                "A current authenticator or recovery code is required".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 // ---- TOTP -----------------------------------------------------------------
@@ -147,9 +193,14 @@ async fn sign_out_everywhere(
 /// stored secret and sets `totp_enabled = 0`, so re-opening the setup panel on
 /// an enrolled account would silently switch 2FA off and invalidate the
 /// authenticator. Disable first (which needs a current code), then re-enrol.
+///
+/// Otherwise it [re-authenticates](reauthenticate) — TOTP being off here, that
+/// is the password. `/totp/enable` needs nothing more: the secret it activates
+/// is only ever handed out by this handler.
 async fn totp_setup(
     _auth: AdminAuth,
     State(state): State<Arc<AppState>>,
+    Json(body): Json<Reauth>,
 ) -> Result<Json<Value>, AppError> {
     let conn = state.db.get()?;
     let already_enabled =
@@ -163,16 +214,20 @@ async fn totp_setup(
             "Two-factor authentication is already enabled. Disable it first to re-enrol.".into(),
         ));
     }
+    reauthenticate(&state, body).await?;
 
     let secret = cred::gen_totp_secret();
     let totp = cred::totp_from_secret(&secret)?;
     let qr = totp
-        .get_qr_base64()
+        .to_qr_base64()
         .map_err(|e| AppError::Internal(format!("QR: {e}")))?;
     let conn = state.db.get()?;
     let s = secret.clone();
     tokio::task::spawn_blocking(move || {
         cred::settings_set(&conn, cred::KEY_TOTP_SECRET, &s)?;
+        // A new secret starts a new sequence of codes; the replay floor belongs
+        // to the old one.
+        cred::settings_del(&conn, cred::KEY_TOTP_LAST_STEP)?;
         cred::settings_set(&conn, cred::KEY_TOTP_ENABLED, "0")
     })
     .await
@@ -188,23 +243,34 @@ struct TotpEnableBody {
     code: String,
 }
 
+/// Confirm enrolment with a first code, which issues the recovery codes.
+///
+/// Refused once enabled: calling it again used to issue a fresh set of recovery
+/// codes, silently invalidating the ones the operator had saved.
 async fn totp_enable(
     _auth: AdminAuth,
     State(state): State<Arc<AppState>>,
     Json(body): Json<TotpEnableBody>,
 ) -> Result<Json<Value>, AppError> {
     let conn = state.db.get()?;
-    let secret =
-        tokio::task::spawn_blocking(move || cred::settings_get(&conn, cred::KEY_TOTP_SECRET))
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?
-            .ok_or_else(|| AppError::BadRequest("Run setup first".into()))?;
+    let (secret, enabled) = tokio::task::spawn_blocking(move || {
+        (
+            cred::settings_get(&conn, cred::KEY_TOTP_SECRET),
+            cred::settings_get(&conn, cred::KEY_TOTP_ENABLED).as_deref() == Some("1"),
+        )
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))?;
+    if enabled {
+        return Err(AppError::BadRequest(
+            "Two-factor authentication is already enabled.".into(),
+        ));
+    }
+    let secret = secret.ok_or_else(|| AppError::BadRequest("Run setup first".into()))?;
 
-    let totp = cred::totp_from_secret(&secret)?;
-    let valid = totp
-        .check_current(&body.code)
-        .map_err(|e| AppError::Internal(format!("TOTP: {e}")))?;
-    if !valid {
+    // Consumes the code, so the one typed to confirm enrolment can't then be
+    // replayed to sign in.
+    if !cred::verify_totp_code(&state, &secret, &body.code).await? {
         return Err(AppError::BadRequest("Incorrect code".into()));
     }
 
@@ -221,52 +287,26 @@ async fn totp_enable(
     Ok(Json(json!({ "ok": true, "recoveryCodes": plain })))
 }
 
-#[derive(Deserialize)]
-struct TotpDisableBody {
-    password: String,
-    /// Current TOTP code, or one of the one-time recovery codes.
-    #[serde(default)]
-    code: Option<String>,
-}
-
 /// Turning 2FA off requires the second factor as well as the password.
 ///
 /// The admin JWT guarding this route is itself minted from the password alone,
 /// so accepting the password as the only proof would gate 2FA teardown on
 /// exactly the factor 2FA exists to backstop — a stolen password (or a live
 /// admin session) could strip it silently. A recovery code is accepted too,
-/// since losing the authenticator is precisely when teardown is needed.
+/// since losing the authenticator is precisely when teardown is needed. With
+/// nothing enrolled, the password alone makes this an idempotent no-op.
 async fn totp_disable(
     _auth: AdminAuth,
     State(state): State<Arc<AppState>>,
-    Json(body): Json<TotpDisableBody>,
+    Json(body): Json<Reauth>,
 ) -> Result<Json<Value>, AppError> {
-    if !cred::verify_password(&state, body.password).await? {
-        return Err(AppError::Forbidden("Wrong password".into()));
-    }
-
-    // Only demand a code when there is an enrolment to protect; otherwise this
-    // endpoint is an idempotent no-op and should stay callable.
-    let conn = state.db.get()?;
-    let enabled =
-        tokio::task::spawn_blocking(move || cred::settings_get(&conn, cred::KEY_TOTP_ENABLED))
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?
-            .as_deref()
-            == Some("1");
-    if enabled {
-        let code = body.code.unwrap_or_default();
-        if !cred::verify_totp_or_recovery(&state, &code).await? {
-            return Err(AppError::Forbidden(
-                "A current authenticator or recovery code is required to disable 2FA".into(),
-            ));
-        }
-    }
+    reauthenticate(&state, body).await?;
 
     let conn = state.db.get()?;
     tokio::task::spawn_blocking(move || {
         cred::settings_del(&conn, cred::KEY_TOTP_SECRET)?;
         cred::settings_del(&conn, cred::KEY_TOTP_ENABLED)?;
+        cred::settings_del(&conn, cred::KEY_TOTP_LAST_STEP)?;
         cred::settings_del(&conn, cred::KEY_TOTP_RECOVERY)
     })
     .await
@@ -292,8 +332,13 @@ pub fn load_passkeys(conn: &rusqlite::Connection) -> Result<Vec<Passkey>, AppErr
 #[derive(Deserialize)]
 struct RegisterStartBody {
     label: String,
+    #[serde(flatten)]
+    proof: Reauth,
 }
 
+/// Begin registering a passkey — after [re-authenticating](reauthenticate),
+/// TOTP code included when enrolled, since passkey sign-in skips TOTP: a passkey
+/// is a full login in its own right.
 async fn passkey_register_start(
     _auth: AdminAuth,
     State(state): State<Arc<AppState>>,
@@ -302,6 +347,7 @@ async fn passkey_register_start(
     if body.label.trim().is_empty() {
         return Err(AppError::BadRequest("Label required".into()));
     }
+    reauthenticate(&state, body.proof).await?;
     let conn = state.db.get()?;
     let existing = tokio::task::spawn_blocking(move || load_passkeys(&conn))
         .await
@@ -331,6 +377,8 @@ struct RegisterFinishBody {
     credential: RegisterPublicKeyCredential,
 }
 
+/// Needs nothing beyond the session: `id` names a ceremony that only a
+/// re-authenticated `register/start` can have begun.
 async fn passkey_register_finish(
     _auth: AdminAuth,
     State(state): State<Arc<AppState>>,
@@ -364,11 +412,15 @@ async fn passkey_register_finish(
     Ok(Json(json!({ "ok": true })))
 }
 
+/// Removing a way to sign in [re-authenticates](reauthenticate) too, as
+/// `totp_disable` does — or a stolen token could strip the operator's passkeys.
 async fn passkey_delete(
     _auth: AdminAuth,
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Json(body): Json<Reauth>,
 ) -> Result<Json<Value>, AppError> {
+    reauthenticate(&state, body).await?;
     let conn = state.db.get()?;
     let n = tokio::task::spawn_blocking(move || {
         conn.execute(
@@ -382,6 +434,64 @@ async fn passkey_delete(
         return Err(AppError::NotFound("Passkey not found".into()));
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+// ---- timezone -------------------------------------------------------------
+
+/// Settings key for the studio timezone (gh #263): an IANA name such as
+/// `Europe/Lisbon`. Absent means unset. Times are still stored as UTC; this
+/// only decides which zone the admin enters them in and which zone the invite
+/// and the viewer's scheduled screen name.
+pub const KEY_TIMEZONE: &str = "timezone";
+
+/// The shape of an IANA zone name as browsers list them (`Europe/Lisbon`,
+/// `America/Argentina/Buenos_Aires`, `UTC`, `Etc/GMT+5`). There is no tz
+/// database on this side to check membership against, so only the shape is
+/// bounded; a browser that does not know the name falls back to its own zone.
+fn valid_timezone(s: &str) -> bool {
+    s.len() <= 64
+        && s.starts_with(|c: char| c.is_ascii_alphabetic())
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '+' | '-'))
+}
+
+async fn get_timezone(
+    _auth: AdminAuth,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, AppError> {
+    let conn = state.db.get()?;
+    let tz = tokio::task::spawn_blocking(move || cred::settings_get(&conn, KEY_TIMEZONE))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(Json(json!({ "timezone": tz })))
+}
+
+#[derive(Deserialize)]
+struct TimezoneBody {
+    timezone: Option<String>,
+}
+
+/// Set the studio timezone; `null` or `""` clears it.
+async fn set_timezone(
+    _auth: AdminAuth,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<TimezoneBody>,
+) -> Result<Json<Value>, AppError> {
+    let tz = body.timezone.filter(|s| !s.is_empty());
+    if let Some(ref s) = tz {
+        if !valid_timezone(s) {
+            return Err(AppError::BadRequest("Invalid timezone".into()));
+        }
+    }
+    let conn = state.db.get()?;
+    let stored = tz.clone();
+    tokio::task::spawn_blocking(move || match stored {
+        Some(s) => cred::settings_set(&conn, KEY_TIMEZONE, &s),
+        None => cred::settings_del(&conn, KEY_TIMEZONE),
+    })
+    .await
+    .map_err(|e| AppError::Internal(e.to_string()))??;
+    Ok(Json(json!({ "ok": true, "timezone": tz })))
 }
 
 /// Drop ceremony entries older than the TTL.
@@ -400,4 +510,5 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/passkeys/register/start", post(passkey_register_start))
         .route("/passkeys/register/finish", post(passkey_register_finish))
         .route("/passkeys/{id}", axum::routing::delete(passkey_delete))
+        .route("/timezone", get(get_timezone).post(set_timezone))
 }

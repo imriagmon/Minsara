@@ -8,6 +8,17 @@ fn auth_val(token: &str) -> axum::http::HeaderValue {
     format!("Bearer {}", token).parse().unwrap()
 }
 
+/// The code for the step after the current one. Every code is accepted once
+/// (RFC 6238 §5.2) and enrolment has already spent the current one; the server
+/// allows a step of skew either side, so the next code is valid now.
+fn next_code(totp: &totp_rs::Totp) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    totp.generate(now + totp.step()).to_string()
+}
+
 #[tokio::test]
 async fn settings_status_requires_auth() {
     let state = common::test_state();
@@ -82,6 +93,7 @@ async fn totp_full_flow_and_recovery_code() {
     let setup = server
         .post("/api/admin/settings/totp/setup")
         .add_header(header::AUTHORIZATION, auth_val(&token))
+        .json(&serde_json::json!({ "password": "test-admin-password" }))
         .await;
     assert_eq!(setup.status_code(), 200);
     let secret = setup.json::<Value>()["secret"]
@@ -90,7 +102,7 @@ async fn totp_full_flow_and_recovery_code() {
         .to_string();
 
     let totp = credentials::totp_from_secret(&secret).unwrap();
-    let code = totp.generate_current().unwrap();
+    let code = totp.generate_current().to_string();
 
     // Enable with a valid code → returns recovery codes.
     let enable = server
@@ -118,7 +130,7 @@ async fn totp_full_flow_and_recovery_code() {
     assert!(body.get("token").is_none());
 
     // Login with a valid TOTP code → token.
-    let code = totp.generate_current().unwrap();
+    let code = next_code(&totp);
     let ok = server
         .post("/api/auth/login")
         .json(&serde_json::json!({"password": "test-admin-password", "totp_code": code}))
@@ -173,6 +185,7 @@ async fn enrol_totp(server: &axum_test::TestServer, token: &str) -> (String, Vec
     let setup = server
         .post("/api/admin/settings/totp/setup")
         .add_header(header::AUTHORIZATION, auth_val(token))
+        .json(&serde_json::json!({ "password": "test-admin-password" }))
         .await;
     assert_eq!(setup.status_code(), 200);
     let secret = setup.json::<Value>()["secret"]
@@ -183,7 +196,7 @@ async fn enrol_totp(server: &axum_test::TestServer, token: &str) -> (String, Vec
     let enable = server
         .post("/api/admin/settings/totp/enable")
         .add_header(header::AUTHORIZATION, auth_val(token))
-        .json(&serde_json::json!({ "code": totp.generate_current().unwrap() }))
+        .json(&serde_json::json!({ "code": totp.generate_current().to_string() }))
         .await;
     assert_eq!(enable.status_code(), 200);
     let recovery: Vec<String> = enable.json::<Value>()["recoveryCodes"]
@@ -214,6 +227,7 @@ async fn totp_setup_refuses_to_clobber_an_active_enrolment() {
     let again = server
         .post("/api/admin/settings/totp/setup")
         .add_header(header::AUTHORIZATION, auth_val(&token))
+        .json(&serde_json::json!({ "password": "test-admin-password" }))
         .await;
     assert_eq!(
         again.status_code(),
@@ -231,7 +245,7 @@ async fn totp_setup_refuses_to_clobber_an_active_enrolment() {
         .post("/api/auth/login")
         .json(&serde_json::json!({
             "password": "test-admin-password",
-            "totp_code": totp.generate_current().unwrap(),
+            "totp_code": next_code(&totp),
         }))
         .await;
     assert_eq!(login.status_code(), 200, "original TOTP secret was rotated");
@@ -271,7 +285,7 @@ async fn totp_disable_requires_a_second_factor() {
         .add_header(header::AUTHORIZATION, auth_val(&token))
         .json(&serde_json::json!({
             "password": "test-admin-password",
-            "code": totp.generate_current().unwrap(),
+            "code": next_code(&totp),
         }))
         .await;
     assert_eq!(ok.status_code(), 200);
@@ -299,6 +313,176 @@ async fn totp_disable_accepts_a_recovery_code() {
         .await;
     assert_eq!(ok.status_code(), 200);
     assert!(!totp_is_enabled(&server).await);
+}
+
+// ---------------------------------------------------------------------------
+// Adding a sign-in factor must re-prove the login, the same as removing one.
+//
+// A session token is revocable; a factor is not. With the token alone, a thief
+// could register a passkey — a login that outlives a password change and "Sign
+// out other devices", and skips TOTP — or bind TOTP to an authenticator the
+// operator does not hold, locking them out of password sign-in.
+// ---------------------------------------------------------------------------
+
+fn passkey_count(state: &stream_backend::state::AppState) -> i64 {
+    state
+        .db
+        .get()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM admin_passkeys", [], |r| r.get(0))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn totp_setup_needs_the_password() {
+    let state = common::test_state();
+    let token = common::admin_token(&state);
+    let server = common::test_app(state.clone());
+    let setup = || {
+        server
+            .post("/api/admin/settings/totp/setup")
+            .add_header(header::AUTHORIZATION, auth_val(&token))
+    };
+
+    // The session token alone, as the old client sent it.
+    assert_eq!(setup().await.status_code(), 415);
+    assert_eq!(
+        setup().json(&serde_json::json!({})).await.status_code(),
+        422
+    );
+    // 403, not 401 — a 401 would sign the operator out over a typo.
+    assert_eq!(
+        setup()
+            .json(&serde_json::json!({ "password": "wrong" }))
+            .await
+            .status_code(),
+        403
+    );
+    assert!(
+        credentials::settings_get(&state.db.get().unwrap(), credentials::KEY_TOTP_SECRET).is_none(),
+        "a refused setup stored a secret"
+    );
+
+    let ok = setup()
+        .json(&serde_json::json!({ "password": "test-admin-password" }))
+        .await;
+    assert_eq!(ok.status_code(), 200);
+    assert!(ok.json::<Value>()["secret"].is_string());
+}
+
+#[tokio::test]
+async fn passkey_registration_needs_the_password() {
+    let state = common::test_state();
+    let token = common::admin_token(&state);
+    let server = common::test_app(state.clone());
+    let start = |body: Value| {
+        server
+            .post("/api/admin/settings/passkeys/register/start")
+            .add_header(header::AUTHORIZATION, auth_val(&token))
+            .json(&body)
+    };
+
+    assert_eq!(
+        start(serde_json::json!({ "label": "theirs" }))
+            .await
+            .status_code(),
+        422
+    );
+    assert_eq!(
+        start(serde_json::json!({ "label": "theirs", "password": "wrong" }))
+            .await
+            .status_code(),
+        403
+    );
+    // A refused start leaves no ceremony behind for `register/finish` to complete.
+    assert!(state.passkey_reg.lock().await.is_empty());
+
+    let ok = start(serde_json::json!({ "label": "mine", "password": "test-admin-password" })).await;
+    assert_eq!(ok.status_code(), 200);
+    assert!(ok.json::<Value>()["options"]["publicKey"]["challenge"].is_string());
+    assert_eq!(state.passkey_reg.lock().await.len(), 1);
+}
+
+/// Passkey sign-in skips TOTP, so with TOTP on, registering a passkey takes the
+/// second factor as well — or the password alone would buy a TOTP-free login.
+#[tokio::test]
+async fn passkey_registration_needs_the_second_factor_when_totp_is_on() {
+    let state = common::test_state();
+    let token = common::admin_token(&state);
+    let server = common::test_app(state.clone());
+    let (secret, _) = enrol_totp(&server, &token).await;
+    let start = |body: Value| {
+        server
+            .post("/api/admin/settings/passkeys/register/start")
+            .add_header(header::AUTHORIZATION, auth_val(&token))
+            .json(&body)
+    };
+
+    let bare = start(serde_json::json!({ "label": "pk", "password": "test-admin-password" })).await;
+    assert_eq!(
+        bare.status_code(),
+        403,
+        "password alone started a registration"
+    );
+    let wrong = start(serde_json::json!({
+        "label": "pk",
+        "password": "test-admin-password",
+        "code": "000000",
+    }))
+    .await;
+    assert_eq!(wrong.status_code(), 403);
+    assert!(state.passkey_reg.lock().await.is_empty());
+
+    let ok = start(serde_json::json!({
+        "label": "pk",
+        "password": "test-admin-password",
+        "code": next_code(&credentials::totp_from_secret(&secret).unwrap()),
+    }))
+    .await;
+    assert_eq!(ok.status_code(), 200);
+}
+
+/// Removal too — otherwise a stolen token strips the operator's passkeys.
+#[tokio::test]
+async fn passkey_removal_needs_the_password() {
+    let state = common::test_state();
+    let token = common::admin_token(&state);
+    let server = common::test_app(state.clone());
+    // `passkey_delete` never parses the credential, so a placeholder will do.
+    state
+        .db
+        .get()
+        .unwrap()
+        .execute(
+            "INSERT INTO admin_passkeys (id, label, credential) VALUES ('pk1', 'operator', '{}')",
+            [],
+        )
+        .unwrap();
+    let delete = || {
+        server
+            .delete("/api/admin/settings/passkeys/pk1")
+            .add_header(header::AUTHORIZATION, auth_val(&token))
+    };
+
+    assert_eq!(delete().await.status_code(), 415);
+    assert_eq!(
+        delete()
+            .json(&serde_json::json!({ "password": "wrong" }))
+            .await
+            .status_code(),
+        403
+    );
+    assert_eq!(
+        passkey_count(&state),
+        1,
+        "a refused removal deleted the passkey"
+    );
+
+    let ok = delete()
+        .json(&serde_json::json!({ "password": "test-admin-password" }))
+        .await;
+    assert_eq!(ok.status_code(), 200);
+    assert_eq!(passkey_count(&state), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -532,24 +716,21 @@ async fn a_trusted_session_is_still_revocable() {
 /// upgrade must not sign the operator out for no reason.
 #[tokio::test]
 async fn tokens_without_a_version_claim_still_work_on_a_fresh_install() {
-    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
     #[derive(serde::Serialize)]
     struct LegacyClaims {
         admin: bool,
-        exp: usize,
+        exp: u64,
     }
 
     let state = common::test_state();
     let secret = state.config.jwt_secret.clone();
-    let legacy = encode(
-        &Header::new(Algorithm::HS256),
+    let legacy = stream_backend::jwt::sign(
         &LegacyClaims {
             admin: true,
-            exp: (now_secs() + 3600) as usize,
+            exp: now_secs() + 3600,
         },
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .unwrap();
+        secret.as_bytes(),
+    );
 
     let server = common::test_app(state);
     assert_eq!(
@@ -561,4 +742,245 @@ async fn tokens_without_a_version_claim_still_work_on_a_fresh_install() {
         200,
         "a pre-upgrade token should survive until something actually revokes it"
     );
+}
+
+/// RFC 6238 §5.2: a verifier must not accept the same one-time password twice.
+/// Each code used to keep working for its whole ~90 s skew window, so one read
+/// over a shoulder or relayed by a phishing proxy signed in again.
+#[tokio::test]
+async fn a_totp_code_signs_in_only_once() {
+    let state = common::test_state();
+    let token = common::admin_token(&state);
+    let server = common::test_app(state);
+    let (secret, _) = enrol_totp(&server, &token).await;
+    let code = next_code(&credentials::totp_from_secret(&secret).unwrap());
+
+    let login = |code: String| {
+        server.post("/api/auth/login").json(&serde_json::json!({
+            "password": "test-admin-password",
+            "totp_code": code,
+        }))
+    };
+    assert_eq!(login(code.clone()).await.status_code(), 200);
+    assert_eq!(login(code).await.status_code(), 401, "the same code twice");
+}
+
+/// The enrolment code is a real code too — it must not be replayable to sign in.
+#[tokio::test]
+async fn the_enrolment_code_cannot_then_sign_in() {
+    let state = common::test_state();
+    let token = common::admin_token(&state);
+    let server = common::test_app(state);
+
+    let secret = server
+        .post("/api/admin/settings/totp/setup")
+        .add_header(header::AUTHORIZATION, auth_val(&token))
+        .json(&serde_json::json!({ "password": "test-admin-password" }))
+        .await
+        .json::<Value>()["secret"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let code = next_code(&credentials::totp_from_secret(&secret).unwrap());
+    let enable = server
+        .post("/api/admin/settings/totp/enable")
+        .add_header(header::AUTHORIZATION, auth_val(&token))
+        .json(&serde_json::json!({ "code": code }))
+        .await;
+    assert_eq!(enable.status_code(), 200);
+
+    let login = server
+        .post("/api/auth/login")
+        .json(&serde_json::json!({ "password": "test-admin-password", "totp_code": code }))
+        .await;
+    assert_eq!(login.status_code(), 401);
+}
+
+/// Enabling again used to mint a fresh set of recovery codes, silently voiding
+/// the ones the operator had saved.
+#[tokio::test]
+async fn enabling_twice_does_not_replace_the_recovery_codes() {
+    let state = common::test_state();
+    let token = common::admin_token(&state);
+    let server = common::test_app(state);
+    let (secret, recovery) = enrol_totp(&server, &token).await;
+
+    let again = server
+        .post("/api/admin/settings/totp/enable")
+        .add_header(header::AUTHORIZATION, auth_val(&token))
+        .json(&serde_json::json!({ "code": next_code(&credentials::totp_from_secret(&secret).unwrap()) }))
+        .await;
+    assert_eq!(again.status_code(), 400);
+
+    // The codes issued at enrolment still work.
+    let login = server
+        .post("/api/auth/login")
+        .json(&serde_json::json!({ "password": "test-admin-password", "totp_code": recovery[0] }))
+        .await;
+    assert_eq!(login.status_code(), 200);
+}
+
+/// Recovery codes were consumed read → bcrypt → write, and two requests could
+/// interleave across the gap: one code submitted twice at once signed in twice,
+/// and two codes at once each wrote back a list still holding the other's —
+/// restoring a code that had just been used.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_recovery_code_is_spent_exactly_once_under_concurrency() {
+    let state = common::test_state();
+    let token = common::admin_token(&state);
+    let server = common::test_app(state.clone());
+    let (_, recovery) = enrol_totp(&server, &token).await;
+
+    let same: Vec<_> = (0..6)
+        .map(|_| {
+            let (state, code) = (state.clone(), recovery[0].clone());
+            tokio::spawn(async move {
+                stream_backend::credentials::consume_recovery_code(&state, &code)
+                    .await
+                    .unwrap()
+            })
+        })
+        .collect();
+    let mut accepted = 0;
+    for task in same {
+        accepted += task.await.unwrap() as usize;
+    }
+    assert_eq!(accepted, 1, "one code was accepted {accepted} times");
+
+    let pair: Vec<_> = [recovery[1].clone(), recovery[2].clone()]
+        .into_iter()
+        .map(|code| {
+            let state = state.clone();
+            tokio::spawn(async move {
+                stream_backend::credentials::consume_recovery_code(&state, &code)
+                    .await
+                    .unwrap()
+            })
+        })
+        .collect();
+    for task in pair {
+        assert!(task.await.unwrap(), "a valid code was refused");
+    }
+    for spent in &recovery[..3] {
+        assert!(
+            !stream_backend::credentials::consume_recovery_code(&state, spent)
+                .await
+                .unwrap(),
+            "spent code {spent} came back"
+        );
+    }
+    let left: Vec<String> = serde_json::from_str(
+        &stream_backend::credentials::settings_get(
+            &state.db.get().unwrap(),
+            stream_backend::credentials::KEY_TOTP_RECOVERY,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(left.len(), 7);
+}
+
+// ---- studio timezone (gh #263) ---------------------------------------------
+
+#[tokio::test]
+async fn timezone_requires_auth() {
+    let state = common::test_state();
+    let server = common::test_app(state);
+    let get = server.get("/api/admin/settings/timezone").await;
+    assert_eq!(get.status_code(), 401);
+    let post = server
+        .post("/api/admin/settings/timezone")
+        .json(&serde_json::json!({"timezone": "Europe/Lisbon"}))
+        .await;
+    assert_eq!(post.status_code(), 401);
+}
+
+/// The setting reaches the one public place that needs it — the room info the
+/// viewer's scheduled screen renders from — and clearing it takes it back out.
+#[tokio::test]
+async fn timezone_round_trips_and_reaches_room_info() {
+    let state = common::test_state();
+    let token = common::admin_token(&state);
+    let slug = common::unique_slug("tz");
+    common::seed_room(&state, "TZ Room", &slug);
+    let server = common::test_app(state);
+    let info = format!("/api/public/rooms/{slug}/info");
+
+    let unset = server.get(&info).await.json::<Value>();
+    assert!(
+        unset["timezone"].is_null(),
+        "unset zone must be null: {unset}"
+    );
+
+    let res = server
+        .post("/api/admin/settings/timezone")
+        .add_header(header::AUTHORIZATION, auth_val(&token))
+        .json(&serde_json::json!({"timezone": "America/Argentina/Buenos_Aires"}))
+        .await;
+    assert_eq!(res.status_code(), 200);
+
+    let got = server
+        .get("/api/admin/settings/timezone")
+        .add_header(header::AUTHORIZATION, auth_val(&token))
+        .await
+        .json::<Value>();
+    assert_eq!(got["timezone"], "America/Argentina/Buenos_Aires");
+    let room = server.get(&info).await.json::<Value>();
+    assert_eq!(room["timezone"], "America/Argentina/Buenos_Aires");
+
+    // Both null and "" clear it — "" is what the picker's "Not set" sends.
+    for clear in [Value::Null, Value::String(String::new())] {
+        server
+            .post("/api/admin/settings/timezone")
+            .add_header(header::AUTHORIZATION, auth_val(&token))
+            .json(&serde_json::json!({"timezone": "Europe/Lisbon"}))
+            .await;
+        let res = server
+            .post("/api/admin/settings/timezone")
+            .add_header(header::AUTHORIZATION, auth_val(&token))
+            .json(&serde_json::json!({"timezone": clear}))
+            .await;
+        assert_eq!(res.status_code(), 200);
+        let room = server.get(&info).await.json::<Value>();
+        assert!(room["timezone"].is_null(), "{clear} did not clear: {room}");
+    }
+}
+
+#[tokio::test]
+async fn timezone_rejects_malformed_names() {
+    let state = common::test_state();
+    let token = common::admin_token(&state);
+    let server = common::test_app(state);
+
+    for bad in [
+        "Europe/Lis bon",
+        "../etc/passwd",
+        "/Europe/Lisbon",
+        "Europe/Lisbon<script>",
+        &"A".repeat(65),
+    ] {
+        let res = server
+            .post("/api/admin/settings/timezone")
+            .add_header(header::AUTHORIZATION, auth_val(&token))
+            .json(&serde_json::json!({"timezone": bad}))
+            .await;
+        assert_eq!(res.status_code(), 400, "accepted {bad:?}");
+    }
+    // Refusals leave nothing behind.
+    let got = server
+        .get("/api/admin/settings/timezone")
+        .add_header(header::AUTHORIZATION, auth_val(&token))
+        .await
+        .json::<Value>();
+    assert!(got["timezone"].is_null());
+
+    // Accepted shapes, including the ones with digits, signs and no region.
+    for good in ["UTC", "Etc/GMT+5", "Etc/GMT-14", "America/Port-au-Prince"] {
+        let res = server
+            .post("/api/admin/settings/timezone")
+            .add_header(header::AUTHORIZATION, auth_val(&token))
+            .json(&serde_json::json!({"timezone": good}))
+            .await;
+        assert_eq!(res.status_code(), 200, "refused {good:?}");
+    }
 }

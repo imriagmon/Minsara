@@ -7,9 +7,21 @@ declare const OvenPlayer: {
 };
 
 interface OvenPlayerInstance {
+  // The WebRTC provider fires this with the RTCPeerConnection it just built, and
+  // the API re-emits every provider event (OvenPlayer 0.10.55, `A.on("all", …)`).
+  on(event: 'peerConnectionPrepared', handler: (pc: RTCPeerConnection) => void): void;
   on(
     event: string,
-    handler: (e?: { newstate?: string; position?: number; offset?: number; duration?: number }) => void,
+    handler: (e?: {
+      newstate?: string;
+      position?: number;
+      offset?: number;
+      duration?: number;
+      // `error` events: OvenPlayer's code (303 decode, 304 unsupported, 302 for
+      // every fatal hls.js error) and, from its hls.js provider, hls.js's error.
+      code?: number;
+      error?: { type?: string; details?: string; fatal?: boolean };
+    }) => void,
   ): void;
   getState(): string;
   getMute(): boolean;
@@ -62,11 +74,16 @@ interface ScreenShareCaptureOptions {
 
 interface RoomOptions {
   audioCaptureDefaults?: AudioCaptureOptions;
+  videoCaptureDefaults?: { deviceId?: string };
+  audioOutput?: { deviceId?: string };
   publishDefaults?: TrackPublishDefaults;
 }
 
 interface LivekitClientNS {
   Room: new (options?: RoomOptions) => LkRoom;
+  // False on every Safari-based browser regardless of setSinkId support — see
+  // devices.ts.
+  supportsAudioOutputSelection(): boolean;
   RoomEvent: {
     ParticipantConnected: string;
     ParticipantDisconnected: string;
@@ -76,7 +93,15 @@ interface LivekitClientNS {
     TrackUnmuted: string;
     TrackSubscribed: string;
     TrackUnsubscribed: string;
+    LocalTrackPublished: string;
     LocalTrackUnpublished: string;
+    // Device health. AudioPlaybackStatusChanged fires when the browser blocks
+    // (or unblocks) remote audio; LocalAudioSilenceDetected when a freshly
+    // captured mic delivers only digital silence; ActiveDeviceChanged when
+    // LiveKit itself switches device (e.g. the OS default changed).
+    AudioPlaybackStatusChanged: string;
+    LocalAudioSilenceDetected: string;
+    ActiveDeviceChanged: string;
     // Connection diagnostics (gh #40). LiveKit reports quality for *every*
     // participant to everyone, so subscribing here gives the host a whole-room
     // view without any backend involvement.
@@ -106,8 +131,18 @@ interface LkTrack {
   kind: string;
   source: string;
   mediaStreamTrack: MediaStreamTrack;
-  attach(el?: HTMLElement | HTMLMediaElement | null): void;
-  detach(el?: HTMLElement | HTMLMediaElement | null): void;
+  // With no argument, attach() creates the element and returns it, and
+  // detach() returns every element it detached.
+  attach(el?: HTMLElement | HTMLMediaElement | null): HTMLMediaElement;
+  detach(el?: HTMLElement | HTMLMediaElement | null): HTMLMediaElement[];
+}
+
+// The local microphone track. restartTrack re-captures with new constraints —
+// the only way to change them on a published track, since
+// setMicrophoneEnabled(true, opts) on an existing track just unmutes it and
+// ignores opts. A restart preserves the muted state.
+interface LkLocalAudioTrack extends LkTrack {
+  restartTrack(options?: AudioCaptureOptions): Promise<void>;
 }
 
 interface LkPublication {
@@ -163,7 +198,13 @@ interface LkRoom {
   ): void;
   connect(url: string, token: string): Promise<void>;
   disconnect(): Promise<void>;
-  switchActiveDevice(kind: 'videoinput' | 'audioinput' | 'audiooutput', deviceId: string): Promise<void>;
+  // Resolves false when the track restarted on a different device than asked
+  // for (an input) — it is not an exception, so it must be checked.
+  switchActiveDevice(kind: 'videoinput' | 'audioinput' | 'audiooutput', deviceId: string): Promise<boolean>;
+  getActiveDevice(kind: 'videoinput' | 'audioinput' | 'audiooutput'): string | undefined;
+  readonly canPlaybackAudio: boolean;
+  // Must run inside a user gesture to unblock audio the browser refused to autoplay.
+  startAudio(): Promise<void>;
 }
 
 // Vendor-prefixed fullscreen API on Safari/iOS.

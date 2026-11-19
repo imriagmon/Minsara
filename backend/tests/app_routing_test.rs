@@ -115,6 +115,39 @@ async fn static_mounts_serve_real_files() {
     assert_eq!(server.get("/privacy").await.status_code(), 200);
 }
 
+/// The privacy page names the release the server runs, filled in from the
+/// compiled-in `Cargo.toml` version.
+#[tokio::test(flavor = "multi_thread")]
+async fn privacy_page_shows_the_running_version() {
+    let state = test_state();
+    let server = test_app_http(state);
+
+    let res = server.get("/privacy").await;
+    assert_eq!(res.status_code(), 200);
+    let body = res.text();
+    assert!(
+        body.contains(&format!("Farbstrom v{}", env!("CARGO_PKG_VERSION"))),
+        "version not filled in: {body}"
+    );
+    assert!(
+        !body.contains(stream_backend::routes::pages::VERSION_MARKER),
+        "marker left in the page: {body}"
+    );
+}
+
+/// The test above runs against a fixture page, so it cannot notice the marker
+/// going missing from the real one — the footer would then just read
+/// "Farbstrom". Check the shipped file carries it.
+#[test]
+fn shipped_privacy_page_carries_the_version_marker() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../www/privacy/index.html");
+    let html = std::fs::read_to_string(path).unwrap();
+    assert!(
+        html.contains(stream_backend::routes::pages::VERSION_MARKER),
+        "{path} lost the version marker"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Link-preview injection
 // ---------------------------------------------------------------------------
@@ -170,4 +203,32 @@ async fn brand_name_is_escaped_into_the_meta_tags() {
         "brand name was not escaped into the page"
     );
     assert!(body.contains("&quot;il&lt;script&gt;"));
+}
+
+/// An unknown API path is a JSON 404. It used to fall through to the SPA
+/// catch-all and come back as the viewer page with a 200.
+#[tokio::test]
+async fn unknown_api_paths_are_json_404s() {
+    let state = common::test_state();
+    let server = common::test_app_http(state);
+
+    for path in [
+        "/api/nope",
+        "/api/rooms/x/y/z",
+        "/api/public/rooms/r/nothing-here",
+    ] {
+        let res = server.get(path).await;
+        assert_eq!(res.status_code(), 404, "{path}");
+        assert_eq!(
+            res.json::<serde_json::Value>()["code"],
+            "NOT_FOUND",
+            "{path}"
+        );
+    }
+    // A real route with the wrong method is still the router's own 405.
+    assert_eq!(server.get("/api/auth/login").await.status_code(), 405);
+    // And a room path is still the viewer.
+    let room = server.get("/watch/some-room-a1b2c3").await;
+    assert_eq!(room.status_code(), 200);
+    assert!(room.text().contains("<html"));
 }

@@ -64,7 +64,8 @@
                 <IceCandidates>
                     <!--
                         INGEST side (WHIP / WebRTC push). Relay must NOT be forced
-                        here — that is the Publishers block's business, further down.
+                        here. (Playback no longer forces it either — see the
+                        Publishers block, further down.)
 
                         With TcpRelayForce=true, OME withholds its real candidates
                         and advertises the working path only through its embedded
@@ -77,11 +78,9 @@
                         then "PeerConnection state is now: Connecting" → "Failed"
                         about 40 s later, with no media ever sent.
 
-                        The Firefox finding that justifies forcing the relay is
-                        about *playback* and lives in the Publishers block; it does
-                        not apply to ingest. TcpRelay stays configured, so clients
-                        that do honour the Link headers keep a relay fallback.
-                        TcpRelayForce is v0.21.0's rename of the deprecated TcpForce.
+                        TcpRelay stays configured, so clients that do honour the
+                        Link headers keep a relay fallback. TcpRelayForce is
+                        v0.21.0's rename of the deprecated TcpForce.
 
                         OME_ICE_ADDRESS is derived in entrypoint.sh: "*" (enumerate
                         interfaces + the STUN-discovered public IP) on a real host,
@@ -112,23 +111,52 @@
                 </Signalling>
                 <IceCandidates>
                     <!--
-                        PLAYBACK side, and here the relay IS forced on purpose —
-                        deliberately unlike the ingest provider above.
+                        PLAYBACK side: direct UDP and the TCP relay raced per
+                        session, the relay alone as the fallback, chosen by the
+                        viewer.
 
-                        Direct ICE was tried on OME v0.21.0 (${PublicIP} candidates
-                        + RFC 6544 TCP ICE, TcpRelayForce=false) and broke Firefox:
-                        it never nominated a candidate and looped "Added session"/
-                        "Removed session" forever. Offering the relay alongside
-                        direct candidates did not fix it either, because with the
-                        container behind Docker NAT the relay is only advertised at
-                        ${PublicIP} and 172.x — neither reachable as localhost.
-                        Forcing the relay is the configuration verified to work in
-                        Chrome, Safari and Firefox. Don't flip it without retesting
-                        Firefox playback.
+                        The viewer (frontend/viewer/player.ts) asks for
+                        ?transport=all, and remounts with ?transport=relay if
+                        nothing plays within 6 s. OME reads the parameter per
+                        session (webrtc_publisher.cpp): all offers the UDP
+                        candidates below plus the embedded TURN server on 3478,
+                        and the browser takes UDP when it gets through; relay
+                        offers only the TURN server. DefaultTransport applies to a
+                        session that doesn't ask (an old cached viewer) and keeps
+                        it on the relay, which is what every session got while the
+                        relay was forced. TcpRelayForce must stay false: true
+                        overrides ?transport for every session.
+
+                        Why not force the relay any more: it put every viewer
+                        behind their own TCP stack. Measured 2026-11-12, a MacBook
+                        collapsed the receive window of its relay connection to
+                        14 KB for 1-2.5 s every 30 s, in Chrome and Safari alike,
+                        while UDP to the same machine was unaffected. Firefox, the
+                        reason it was forced, plays fine over direct UDP on a real
+                        host; the "Firefox never nominates" failure was measured on
+                        a localhost Docker Desktop stack.
+
+                        transport=all has to be in the URL: OvenPlayer sets
+                        iceTransportPolicy "relay" whenever OME offers a relay
+                        server and the URL doesn't say all, so DefaultTransport=all
+                        on its own means relay-only. Measured 2026-11-13 with all in
+                        the URL: Chrome and Firefox on UDP in 0.2-0.4 s, and with
+                        their UDP dropped, on the relay in 0.3-0.55 s.
+
+                        OME sends media down the pair the browser nominates first
+                        and ignores later nominations. That is why the viewer keeps
+                        its 6 s fallback: Safari with iCloud Private Relay reaches
+                        the UDP candidates through Apple's relay, connects and
+                        completes DTLS, and gets no picture when that pair wins.
+
+                        The UDP candidate address follows the ingest provider's
+                        (OME_ICE_ADDRESS, entrypoint.sh): "*" on a real host,
+                        127.0.0.1 on a localhost stack.
                     -->
-                    <IceCandidate>*:10000-10009/udp</IceCandidate>
+                    <IceCandidate>${env:OME_ICE_ADDRESS:*}:10000-10009/udp</IceCandidate>
                     <TcpRelay>*:3478</TcpRelay>
-                    <TcpRelayForce>true</TcpRelayForce>
+                    <TcpRelayForce>false</TcpRelayForce>
+                    <DefaultTransport>relay</DefaultTransport>
                     <TcpRelayWorkerCount>2</TcpRelayWorkerCount>
                 </IceCandidates>
             </WebRTC>
@@ -188,9 +216,12 @@
             </Host>
 
             <!--
-                Admission Webhook — OME calls our backend to validate every
-                ingest connection (stream key check) and optionally viewer connections.
-                Backend responds with accept/deny JSON.
+                Admission Webhook — OME asks the backend before every ingest
+                (stream key check; the reply renames the stream to the key's
+                playback id via new_url) and before every browser playback
+                session (participant or admin-preview credentials in the query
+                string). Backend responds with accept/deny JSON. See
+                backend/src/routes/webhook.rs and backend/src/playback.rs.
             -->
             <AdmissionWebhooks>
                 <!-- Single-container: the backend runs on localhost, not a
@@ -202,8 +233,9 @@
                 <Enables>
                     <!-- Validate all ingest connections (stream key auth) -->
                     <Providers>rtmp,srt,webrtc</Providers>
-                    <!-- Phase 2: enable webrtc,llhls here for viewer waiting room -->
-                    <Publishers></Publishers>
+                    <!-- Validate browser playback. SRT playback is gated by
+                         SignedPolicy below instead. -->
+                    <Publishers>webrtc,llhls</Publishers>
                 </Enables>
             </AdmissionWebhooks>
 
@@ -215,9 +247,8 @@
                 forged tokens.
 
                 Scoped to <Publishers>srt only: browser playback (LLHLS/WebRTC)
-                and all ingest (Providers, gated by the admission webhook above)
-                are unaffected. SecretKey must match OME_SIGNED_POLICY_SECRET in
-                the backend env.
+                and all ingest are gated by the admission webhook above instead.
+                SecretKey must match OME_SIGNED_POLICY_SECRET in the backend env.
             -->
             <SignedPolicy>
                 <PolicyQueryKeyName>policy</PolicyQueryKeyName>
@@ -244,6 +275,67 @@
                         <OutputProfile>
                             <Name>bypass</Name>
                             <OutputStreamName>${OriginStreamName}</OutputStreamName>
+
+                            <!--
+                                H.264 fallback for browsers that cannot decode the main
+                                (HEVC 10-bit) picture. An encoder that sends BOTH an HEVC and
+                                an H.264 video PID in one SRT stream (Farbcode's fallback
+                                output: HEVC on 0x101, AAC on 0x102, H.264 on 0x103) gets two
+                                tracks in the bypass_video group, numbered in PID order - the
+                                lower PID is index 0. So the H.264 PID must be the higher one.
+
+                                Every default playlist starts from index 0 - llhls.m3u8, the
+                                bare WebRTC URL and SRT's own - so the main picture and any
+                                single-track stream are served exactly as before. This
+                                playlist exposes index 1:
+                                  LL-HLS  /live/<pid>/fallback.m3u8
+                                  WebRTC  /live/<pid>/fallback
+                                The admission webhook gates both like any other playback
+                                URL: the stream is the path segment after the app.
+
+                                Two renditions because a rendition names one audio track:
+                                LL-HLS keeps the AAC one and drops the Opus one (unsupported
+                                codec there), and WebRTC's offer skips the AAC payload and
+                                negotiates Opus.
+
+                                The H.264 cannot share a playlist with the HEVC. WebRTC
+                                serves the codec the browser's answer lists first
+                                (rtc_session.cpp), OME offers H.264 before H.265 (a map keyed
+                                by codec id), and browsers answer in the offer's order - so a
+                                mixed playlist hands an HEVC-capable Chrome the H.264. The
+                                viewer picks the playlist instead (frontend/viewer/player.ts).
+
+                                SRT ignores this playlist (no EnableTsPackaging), but its
+                                default playlist muxes EVERY track of the bypass_video group
+                                (srt_stream.cpp ignores VideoIndexHint): Farbplay receives
+                                both video PIDs and must lock to the HEVC one. And use
+                                explicit renditions - RenditionTemplate's VideoIndexHint is
+                                never parsed in v0.21.0 (video_template.h).
+
+                                A single-track stream leaves this playlist without video:
+                                the LL-HLS one is empty and the WebRTC one would answer with
+                                audio only, which is why the viewer asks for it only after
+                                the LL-HLS probe has found a video track in it.
+                            -->
+                            <Playlist>
+                                <Name>fallback</Name>
+                                <FileName>fallback</FileName>
+                                <Options>
+                                    <WebRtcAutoAbr>false</WebRtcAutoAbr>
+                                </Options>
+                                <Rendition>
+                                    <Name>h264_aac</Name>
+                                    <Video>bypass_video</Video>
+                                    <VideoIndexHint>1</VideoIndexHint>
+                                    <Audio>aac_audio</Audio>
+                                </Rendition>
+                                <Rendition>
+                                    <Name>h264_opus</Name>
+                                    <Video>bypass_video</Video>
+                                    <VideoIndexHint>1</VideoIndexHint>
+                                    <Audio>opus_audio</Audio>
+                                </Rendition>
+                            </Playlist>
 
                             <Encodes>
                                 <!--

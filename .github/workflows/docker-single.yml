@@ -33,6 +33,12 @@ env:
   # workflow's own GITHUB_TOKEN, so no Docker Hub account or secrets are needed.
   IMAGE: ghcr.io/imriagmon/minsara
 
+# Read-only by default; the notices job asks for write on its own. Actions are
+# pinned to commit SHAs (tag in the trailing comment, which Dependabot keeps
+# current) — this workflow holds the Docker Hub credentials.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -40,7 +46,10 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history, so a release tag can be checked against main below.
+          fetch-depth: 0
 
       # Publish ONLY on a v*.*.* release tag. Pushes to main and PRs build the
       # image as a CI safety net but push nothing to the registry.
@@ -53,11 +62,30 @@ jobs:
             echo "push=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: docker/setup-buildx-action@v4
+      # Releases are cut from main: what is published should be what main
+      # holds, and the notices job below commits to main from the same
+      # assumption. v1.1.5 was tagged on dev and shipped code main did not have.
+      - name: Refuse a release tag that is not on main
+        if: steps.pub.outputs.push == 'true'
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME is not on main. Merge to main, then tag main."
+            exit 1
+          fi
+
+      # The version the app reports (the privacy page) is compiled in from
+      # backend/Cargo.toml, so a tag the version files disagree with would
+      # publish an image naming the wrong release. They sat at 0.1.0 through
+      # every release up to v1.2.2. Bump with scripts/bump-version.sh first.
+      - name: Refuse a release tag the version files do not match
+        if: steps.pub.outputs.push == 'true'
+        run: ./scripts/bump-version.sh --check "$GITHUB_REF_NAME"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
         if: steps.pub.outputs.push == 'true'
-        uses: docker/login-action@v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -69,7 +97,7 @@ jobs:
       # produce an empty tag list (nothing is published — push=false above).
       - name: Compute tags
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE }}
           flavor: |
@@ -79,7 +107,7 @@ jobs:
             type=semver,pattern=v{{major}}.{{minor}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64
@@ -109,11 +137,13 @@ jobs:
     steps:
       # Commit onto main, not the tag: a tag is not a branch, and releases are
       # cut from main so its lockfile is the one the tag was built from.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: backend
       - name: Install cargo-about

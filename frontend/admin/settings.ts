@@ -1,10 +1,12 @@
-// Settings tab: change the admin password, enrol/disable TOTP 2FA, and
-// register/remove WebAuthn passkeys. Mirrors branding.ts's load/init split.
+// Settings tab: change the admin password, enrol/disable TOTP 2FA,
+// register/remove WebAuthn passkeys, and pick the studio timezone. Mirrors
+// branding.ts's load/init split.
 
 import { apiFetch, setToken } from './auth.js';
 import { toast, esc, fmtDateTime } from '../shared/utils.js';
 import { closeModal, confirmModal, openModal, promptModal } from '../shared/components.js';
 import { doRegister, webauthnSupported } from './webauthn.js';
+import { browserZone, isKnownZone, offsetLabel, pickerZones } from '../shared/timezone.js';
 import type { SettingsStatus } from './types.js';
 
 function $(id: string): HTMLElement | null {
@@ -19,10 +21,42 @@ function show(id: string, visible: boolean): void {
   if (el) el.style.display = visible ? '' : 'none';
 }
 
+// From the last status load; decides whether askReauth needs a code.
+let totpOn = false;
+
+interface Reauth {
+  password: string;
+  code?: string;
+}
+
+// Adding or removing a way to sign in re-proves the login: the password, then —
+// while TOTP is on — a current authenticator or recovery code. Null if either
+// prompt is cancelled. The server enforces this; a wrong answer is a 403 whose
+// message the caller toasts, never a 401 that would sign the operator out.
+async function askReauth(title: string, confirmLabel: string): Promise<Reauth | null> {
+  const password = await promptModal({
+    title,
+    message: 'Confirm your password.',
+    label: 'Password',
+    inputType: 'password',
+    confirmLabel: totpOn ? 'Continue' : confirmLabel,
+  });
+  if (!password) return null;
+  if (!totpOn) return { password };
+  const code = await promptModal({
+    title,
+    message: 'Enter a code from your authenticator app, or one of your recovery codes.',
+    label: 'Code',
+    confirmLabel,
+  });
+  return code ? { password, code } : null;
+}
+
 export async function loadSettings(): Promise<void> {
-  // Independent of the account-settings status call below, so it still loads if
-  // that fails.
+  // Independent of the account-settings status call below, so they still load
+  // if that fails.
   void loadSrtEncryption();
+  void loadStudioZone().then(renderTimezone);
   let res: Response | null;
   try {
     res = await apiFetch('/api/admin/settings/status');
@@ -36,6 +70,7 @@ export async function loadSettings(): Promise<void> {
     return;
   }
   const s: SettingsStatus = await res.json();
+  totpOn = s.totpEnabled;
 
   const pwState = $('set-pw-state');
   if (pwState)
@@ -71,7 +106,7 @@ export async function loadSettings(): Promise<void> {
         </div>`,
           )
           .join('')
-      : '<span style="font-size:13px;color:var(--dim)">No passkeys registered.</span>';
+      : '<span class="empty-note">No passkeys registered.</span>';
   }
 }
 
@@ -107,7 +142,12 @@ async function changePassword(): Promise<void> {
 }
 
 async function startTotpSetup(): Promise<void> {
-  const res = await apiFetch('/api/admin/settings/totp/setup', { method: 'POST' });
+  const proof = await askReauth('Enable Two-Factor', 'Continue');
+  if (!proof) return;
+  const res = await apiFetch('/api/admin/settings/totp/setup', {
+    method: 'POST',
+    body: JSON.stringify(proof),
+  });
   if (!res || !res.ok) {
     // Refused while already enrolled — re-running setup would rotate the secret
     // and switch 2FA off, so the server sends back what to do instead.
@@ -139,7 +179,7 @@ async function confirmTotp(): Promise<void> {
   if (box) {
     box.style.display = '';
     box.innerHTML =
-      '<div class="room-card-meta">Save these one-time recovery codes somewhere safe — they are shown only once:</div><pre style="font-size:13px;line-height:1.7">' +
+      '<div class="room-card-meta">Save these one-time recovery codes somewhere safe — they are shown only once:</div><pre class="recovery-codes">' +
       (d.recoveryCodes as string[]).map(esc).join('\n') +
       '</pre>';
   }
@@ -149,29 +189,13 @@ async function confirmTotp(): Promise<void> {
 
 // Teardown needs both factors: the password, then a current authenticator code
 // (or a recovery code, for the case where the authenticator is what was lost).
-// The server enforces this — asking for the password alone gets a 403, which
-// reports the reason rather than signing you out the way a 401 would.
 async function disableTotp(): Promise<void> {
-  const password = await promptModal({
-    title: 'Disable Two-Factor',
-    message: 'Confirm your password to turn off TOTP 2FA.',
-    label: 'Password',
-    inputType: 'password',
-    confirmLabel: 'Continue',
-  });
-  if (!password) return;
-
-  const code = await promptModal({
-    title: 'Disable Two-Factor',
-    message: 'Enter a code from your authenticator app, or one of your recovery codes.',
-    label: 'Code',
-    confirmLabel: 'Disable 2FA',
-  });
-  if (!code) return;
+  const proof = await askReauth('Disable Two-Factor', 'Disable 2FA');
+  if (!proof) return;
 
   const res = await apiFetch('/api/admin/settings/totp/disable', {
     method: 'POST',
-    body: JSON.stringify({ password, code }),
+    body: JSON.stringify(proof),
   });
   if (res && res.ok) {
     const box = $('set-totp-recovery');
@@ -245,12 +269,15 @@ async function addPasskey(): Promise<void> {
     return;
   }
   closeModal('passkey-modal');
+  const proof = await askReauth('Add Passkey', 'Continue');
+  if (!proof) return;
   const start = await apiFetch('/api/admin/settings/passkeys/register/start', {
     method: 'POST',
-    body: JSON.stringify({ label }),
+    body: JSON.stringify({ label, ...proof }),
   });
   if (!start || !start.ok) {
-    toast('Could not start registration');
+    const e = start ? await start.json().catch(() => ({})) : {};
+    toast(e.error || 'Could not start registration');
     return;
   }
   const { id, options } = await start.json();
@@ -284,12 +311,18 @@ async function deletePasskey(id: string): Promise<void> {
     }))
   )
     return;
-  const res = await apiFetch(`/api/admin/settings/passkeys/${id}`, { method: 'DELETE' });
+  const proof = await askReauth('Remove Passkey', 'Remove');
+  if (!proof) return;
+  const res = await apiFetch(`/api/admin/settings/passkeys/${id}`, {
+    method: 'DELETE',
+    body: JSON.stringify(proof),
+  });
   if (res && res.ok) {
     toast('Passkey removed');
     void loadSettings();
   } else {
-    toast('Remove failed');
+    const e = res ? await res.json().catch(() => ({})) : {};
+    toast(e.error || 'Remove failed');
   }
 }
 
@@ -365,11 +398,92 @@ async function applySrtEncryption(): Promise<void> {
   updateSrtApplyState(); // re-enables Apply if the POST failed (still dirty)
 }
 
+// ---- Studio timezone (gh #263) ----
+
+// The zone room start/expiry times are entered in, and that the invite and the
+// viewer's scheduled screen name. Null while unloaded or unset; studioZone()
+// then falls back to this browser's zone, which is what every admin time meant
+// before the setting existed.
+let savedZone: string | null = null;
+let onTimezoneChange: () => void = () => {};
+
+export function setOnTimezoneChange(fn: () => void): void {
+  onTimezoneChange = fn;
+}
+
+export function studioZone(): string {
+  return isKnownZone(savedZone) ? savedZone : browserZone();
+}
+
+export async function loadStudioZone(): Promise<void> {
+  try {
+    const res = await apiFetch('/api/admin/settings/timezone');
+    if (res && res.ok) savedZone = ((await res.json()) as { timezone: string | null }).timezone;
+  } catch (e) {
+    console.error('[settings] timezone request failed', e);
+  }
+}
+
+// "GMT+1 · Paris" — offset first, since that is what the list is sorted by.
+function zoneOption(zone: string, now: Date): string {
+  const city = (zone.split('/').pop() ?? zone).replace(/_/g, ' ');
+  return `<option value="${esc(zone)}">${esc(offsetLabel(zone, now))} · ${esc(city)}</option>`;
+}
+
+function zoneOptions(): string {
+  const now = new Date();
+  return (
+    `<option value="">Not set — use this browser's zone</option>` +
+    pickerZones(now)
+      .map((zone) => zoneOption(zone, now))
+      .join('')
+  );
+}
+
+function renderTimezone(): void {
+  const sel = $('set-tz') as HTMLSelectElement | null;
+  if (!sel) return;
+  if (!sel.options.length) sel.innerHTML = zoneOptions();
+  sel.value = savedZone ?? '';
+  // A saved zone the list does not offer — another city on a listed clock,
+  // renamed upstream, or unknown to this engine — would otherwise show as
+  // "Not set" and be cleared by the next save.
+  if (savedZone && sel.value !== savedZone) {
+    sel.insertAdjacentHTML(
+      'beforeend',
+      isKnownZone(savedZone)
+        ? zoneOption(savedZone, new Date())
+        : `<option value="${esc(savedZone)}">${esc(savedZone)}</option>`,
+    );
+    sel.value = savedZone;
+  }
+}
+
+async function saveTimezone(): Promise<void> {
+  const sel = $('set-tz') as HTMLSelectElement | null;
+  if (!sel) return;
+  const timezone = sel.value || null;
+  const res = await apiFetch('/api/admin/settings/timezone', {
+    method: 'POST',
+    body: JSON.stringify({ timezone }),
+  });
+  if (res && res.ok) {
+    savedZone = timezone;
+    toast('Timezone saved');
+    onTimezoneChange();
+  } else {
+    sel.value = savedZone ?? '';
+    const e = res ? await res.json().catch(() => ({})) : {};
+    toast(e.error || 'Could not save timezone');
+  }
+}
+
 export function initSettings(): void {
   $('set-pw-btn')?.addEventListener('click', changePassword);
   $('srt-enc-ingest')?.addEventListener('change', updateSrtApplyState);
   $('srt-enc-playback')?.addEventListener('change', updateSrtApplyState);
   $('srt-enc-apply')?.addEventListener('click', () => void applySrtEncryption());
+  $('set-tz')?.addEventListener('change', () => void saveTimezone());
   $('set-totp-enable-btn')?.addEventListener('click', startTotpSetup);
   $('set-signout-all-btn')?.addEventListener('click', signOutEverywhere);
   $('set-totp-confirm-btn')?.addEventListener('click', confirmTotp);
