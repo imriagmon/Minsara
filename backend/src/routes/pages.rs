@@ -156,11 +156,7 @@ async fn serve_page(
     // Replace the shipped placeholder title with the brand title (no-op when the
     // brand is the default), then inject the preview tags just before </head>.
     let out = html
-        .replacen(
-            "<title>MINSARA</title>",
-            &format!("<title>{s}</title>"),
-            1,
-        )
+        .replacen("<title>MINSARA</title>", &format!("<title>{s}</title>"), 1)
         .replacen("</head>", &format!("{meta}</head>"), 1);
 
     Ok(Html(out))
