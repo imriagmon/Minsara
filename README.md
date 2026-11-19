@@ -53,7 +53,7 @@ Deployment information can be found in [DEPLOYMENT.md](docs/DEPLOYMENT.md).
 Here is a one line command to deploy Farbstrom on a fresh VPS or VM, all you have to do is replace the domain with your own:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/imriagmon/Colorstream/main/install.sh | bash -s -- stream.yourdomain.com
+curl -fsSL https://raw.githubusercontent.com/imriagmon/Minsara/main/install.sh | bash -s -- stream.yourdomain.com
 ```
 Alternatively, if you just want to try things out:
 

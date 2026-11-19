@@ -31,7 +31,7 @@ on:
 env:
   # This fork (MINSARA) publishes to GitHub Container Registry with the
   # workflow's own GITHUB_TOKEN, so no Docker Hub account or secrets are needed.
-  IMAGE: ghcr.io/imriagmon/colorstream
+  IMAGE: ghcr.io/imriagmon/minsara
 
 jobs:
   build:

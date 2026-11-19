@@ -3,10 +3,10 @@
 # install.sh — zero-checkout bootstrap for a Farbstrom deploy host.
 #
 # Fetches just the deploy artifacts (no source tree) into a target directory and
-# hands off to deploy.sh. Both the repo and the ghcr.io/imriagmon/colorstream image are
+# hands off to deploy.sh. Both the repo and the ghcr.io/imriagmon/minsara image are
 # public, so this needs no credentials.
 #
-#   curl -fsSL https://raw.githubusercontent.com/imriagmon/Colorstream/main/install.sh \
+#   curl -fsSL https://raw.githubusercontent.com/imriagmon/Minsara/main/install.sh \
 #     | bash -s -- stream.yourdomain.com
 #
 # Everything after `--` is forwarded to deploy.sh, so all of its flags work:
@@ -19,7 +19,7 @@
 #   FARBSTROM_NO_RUN=1        fetch only, don't run deploy.sh (dry run)
 set -euo pipefail
 
-REPO="imriagmon/Colorstream"
+REPO="imriagmon/Minsara"
 REF="${FARBSTROM_REF:-main}"
 DIR="${FARBSTROM_DIR:-/opt/farbstrom}"
 RAW="https://raw.githubusercontent.com/${REPO}/${REF}"
