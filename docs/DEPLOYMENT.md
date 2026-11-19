@@ -123,7 +123,7 @@ The script waits for the container's healthcheck before reporting success, and o
 **Even simpler — zero-checkout bootstrap.** Both the repo and the `farbhaus/farbstrom` image are public, so a fresh host needs no git clone:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/farbhaus/Farbstrom/main/install.sh | bash -s -- stream.yourdomain.com
+curl -fsSL https://raw.githubusercontent.com/imriagmon/Colorstream/main/install.sh | bash -s -- stream.yourdomain.com
 ```
 
 `install.sh` fetches just `docker-compose.yml`, `.env.example`, and `deploy.sh` into `/opt/farbstrom` and hands off to `deploy.sh`; everything after `--` is forwarded (e.g. `--behind-proxy …`).

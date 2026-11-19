@@ -29,16 +29,21 @@ on:
       - '.github/workflows/docker-single.yml'
 
 env:
-  IMAGE: farbhaus/farbstrom
+  # This fork (MINSARA) publishes to GitHub Container Registry with the
+  # workflow's own GITHUB_TOKEN, so no Docker Hub account or secrets are needed.
+  IMAGE: ghcr.io/imriagmon/colorstream
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v7
 
       # Publish ONLY on a v*.*.* release tag. Pushes to main and PRs build the
-      # image as a CI safety net but push nothing to Docker Hub.
+      # image as a CI safety net but push nothing to the registry.
       - name: Decide whether to publish
         id: pub
         run: |
@@ -50,12 +55,13 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
-      - name: Log in to Docker Hub
+      - name: Log in to GitHub Container Registry
         if: steps.pub.outputs.push == 'true'
         uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       # Tag-only scheme: a v*.*.* tag → :vX.Y.Z + :vX.Y (git tag == Docker tag)
       # and :latest tracks the newest release. latest=false disables the action's

@@ -4,7 +4,7 @@
 # and bind-mount ./www:  make dev  (or  -f docker-compose.yml -f docker-compose.dev.yml).
 services:
   farbstrom:
-    image: farbhaus/farbstrom:${FARBSTROM_TAG:-latest}
+    image: ghcr.io/imriagmon/colorstream:${FARBSTROM_TAG:-latest}
     container_name: farbstrom
     restart: unless-stopped
     ports:

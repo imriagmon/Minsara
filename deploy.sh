@@ -164,7 +164,7 @@ ensure_image() {
   # silently abort the script on this assignment.
   local tag image
   tag="$( { grep -E '^FARBSTROM_TAG=' .env 2>/dev/null || true; } | cut -d= -f2-)"
-  image="farbhaus/farbstrom:${tag:-latest}"
+  image="ghcr.io/imriagmon/colorstream:${tag:-latest}"
   info "No published image for this platform/tag — building from source ($image)"
   $DOCKER build -t "$image" .
 }
