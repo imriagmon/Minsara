@@ -224,7 +224,7 @@ const COLOR_KEYS: &[&str] = &[
 
 /// Fallback brand name when no `site_name` setting is configured. Used for the
 /// browser title, the wordmark, and the link-preview (Open Graph) tags.
-pub const DEFAULT_SITE_NAME: &str = "Farbstrom";
+pub const DEFAULT_SITE_NAME: &str = "MINSARA";
 
 /// Read the configured brand name, falling back to [`DEFAULT_SITE_NAME`].
 /// Synchronous — call from a `spawn_blocking` context or a blocking handler.

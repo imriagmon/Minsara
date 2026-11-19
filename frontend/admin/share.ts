@@ -30,12 +30,12 @@ async function resolveBrand(): Promise<string> {
     const res = await fetch('/api/branding');
     if (res.ok) {
       const data = (await res.json()) as BrandingResponse;
-      brandName = data.siteName?.trim() || 'Farbstrom';
+      brandName = data.siteName?.trim() || 'MINSARA';
     }
   } catch {
     // Offline or blocked — fall through to the default, and retry next open.
   }
-  return brandName || 'Farbstrom';
+  return brandName || 'MINSARA';
 }
 
 // The recipient is usually not in the sender's timezone, so the invite spells

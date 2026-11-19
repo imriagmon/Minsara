@@ -120,7 +120,7 @@ async fn static_mounts_serve_real_files() {
 // ---------------------------------------------------------------------------
 
 /// Crawlers do not run JS, so the brand title and Open Graph tags are injected
-/// server-side. The injection works by string-replacing `<title>Farbstrom</title>`
+/// server-side. The injection works by string-replacing `<title>MINSARA</title>`
 /// and `</head>` — if either marker ever changes in the shipped HTML, this
 /// silently becomes a no-op.
 #[tokio::test(flavor = "multi_thread")]

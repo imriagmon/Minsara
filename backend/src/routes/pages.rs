@@ -157,7 +157,7 @@ async fn serve_page(
     // brand is the default), then inject the preview tags just before </head>.
     let out = html
         .replacen(
-            "<title>Farbstrom</title>",
+            "<title>MINSARA</title>",
             &format!("<title>{s}</title>"),
             1,
         )

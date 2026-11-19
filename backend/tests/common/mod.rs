@@ -253,7 +253,7 @@ pub fn unique_slug(prefix: &str) -> String {
 
 /// Populate the `web_root` fixture tree with the handful of files the static
 /// mounts and the SPA handlers expect. The two HTML documents carry the same
-/// `<title>Farbstrom</title>` and `</head>` markers the real pages do, since
+/// `<title>MINSARA</title>` and `</head>` markers the real pages do, since
 /// `routes::pages` rewrites those exact strings.
 pub fn seed_web_root(state: &Arc<AppState>) {
     let web = &state.config.web_root;
@@ -262,7 +262,7 @@ pub fn seed_web_root(state: &Arc<AppState>) {
     }
     let page = |body: &str| {
         format!(
-            "<!doctype html><html><head><title>Farbstrom</title></head><body>{body}</body></html>"
+            "<!doctype html><html><head><title>MINSARA</title></head><body>{body}</body></html>"
         )
     };
     std::fs::write(format!("{web}/viewer/index.html"), page("viewer")).unwrap();

@@ -57,7 +57,7 @@ export async function loadBranding(): Promise<void> {
 
   // Brand name: visible in the header wordmark (when no logo) and the tab title,
   // so a Site Name change takes effect immediately.
-  const siteName = data.siteName || 'Farbstrom';
+  const siteName = data.siteName || 'MINSARA';
   document.title = `${siteName} — Admin`;
   const brandName = document.getElementById('brand-name');
   if (brandName) {

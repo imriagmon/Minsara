@@ -140,7 +140,7 @@ pub fn totp_from_secret(secret_b32: &str) -> Result<TOTP, AppError> {
         1,
         30,
         bytes,
-        Some("Farbstrom".to_string()),
+        Some("MINSARA".to_string()),
         "admin".to_string(),
     )
     .map_err(|e| AppError::Internal(format!("TOTP init: {e}")))
@@ -255,7 +255,7 @@ pub fn build_webauthn(public_origin: &str) -> Webauthn {
         .to_string();
     WebauthnBuilder::new(&rp_id, &url)
         .expect("FATAL: invalid WebAuthn RP config")
-        .rp_name("Farbstrom")
+        .rp_name("MINSARA")
         .build()
         .expect("FATAL: failed to build WebAuthn")
 }

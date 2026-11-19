@@ -36,7 +36,7 @@ export interface ApplyBrandingOptions {
 // (e.g. the viewer's per-room title) get the right value without waiting on the
 // /api/branding fetch (which would otherwise race and fall back to the default).
 let brandName =
-  document.querySelector('meta[name="brand-name"]')?.getAttribute('content') || 'Farbstrom';
+  document.querySelector('meta[name="brand-name"]')?.getAttribute('content') || 'MINSARA';
 export function getBrandName(): string {
   return brandName;
 }

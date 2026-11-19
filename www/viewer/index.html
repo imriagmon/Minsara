@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Farbstrom</title>
+<title>MINSARA</title>
 <link rel="icon" type="image/svg+xml" href="/shared/favicon.svg">
 <link rel="icon" type="image/png" href="/shared/favicon.png">
 <link rel="apple-touch-icon" href="/shared/favicon.png">
@@ -92,7 +92,7 @@ html, body { overflow: hidden; }
 }
 .conf-prompt-btn:hover { border-color: var(--dim); background: var(--bg); }
 .conf-prompt-btn:focus-visible { outline: none; box-shadow: var(--ring-accent); border-color: var(--accent); }
-.conf-prompt-btn.pref-saved { border-color: var(--accent); color: var(--accent); }
+.conf-prompt-btn.pref-saved { border-color: transparent; color: var(--text); background: linear-gradient(var(--surface2), var(--surface2)) padding-box, var(--accent-rainbow) border-box; }
 .conf-prompt-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 .conf-prompt-skip {
     background: none; color: var(--dim); border-color: transparent;
@@ -495,7 +495,7 @@ body.stage-morphing .tile.is-morphing {
     transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .panel-tab:hover { color: var(--text); }
-.panel-tab.is-active { color: var(--text); border-bottom-color: var(--accent); }
+.panel-tab.is-active { color: var(--text); border-image: var(--accent-rainbow) 1; }
 .panel-tab:focus-visible { outline: none; box-shadow: var(--ring-accent); border-radius: var(--r-inset); }
 .panel-tab.has-notification::after {
     content: ''; position: absolute; top: 0; right: -2px;
@@ -780,7 +780,7 @@ body.has-focus.strip-hidden #stage-strip {
 #chat-messages { flex: 1; overflow-y: auto; padding: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-3); }
 .chat-msg { display: flex; flex-direction: column; gap: 2px; padding-left: 0; border-left: var(--bw-accent) solid transparent; padding: 2px 0 2px var(--sp-2); margin-left: calc(var(--sp-2) * -1); transition: border-color var(--dur-fast) var(--ease-out); }
 /* Presenter messages get a subtle left accent bar — glanceable without full bubble noise. */
-.chat-msg:has(.chat-who.presenter) { border-left-color: var(--accent); }
+.chat-msg:has(.chat-who.presenter) { border-image: var(--accent-rainbow-v) 1; }
 .chat-meta { display: flex; align-items: baseline; gap: 6px; }
 .chat-who { font-size: var(--fs-xs); font-weight: var(--fw-bold); }
 .chat-who.presenter { color: var(--accent); }
@@ -963,7 +963,7 @@ body.has-focus.strip-hidden #stage-strip {
 #more-sheet .tb-sep { display: none; }
 /* Compact pill drops its in-pill dividers (some bound a moved-out group). */
 #bottom-toolbar.compact > .tb-sep { display: none; }
-#more-btn.active { border-color: var(--accent); color: var(--accent); }
+#more-btn.active { border-color: transparent; color: var(--text); background: linear-gradient(var(--surface2), var(--surface2)) padding-box, var(--accent-rainbow) border-box; }
 
 .tb-btn {
     width: 42px; height: 42px; flex-shrink: 0;
@@ -978,7 +978,7 @@ body.has-focus.strip-hidden #stage-strip {
 .tb-btn:hover { border-color: var(--dim); color: var(--text); }
 .tb-btn.active { border-color: var(--green); color: var(--green); }
 .tb-btn.muted { border-color: var(--danger); color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
-.tb-btn.panel-open { border-color: var(--accent); color: var(--accent); }
+.tb-btn.panel-open { border-color: transparent; color: var(--text); background: linear-gradient(var(--surface2), var(--surface2)) padding-box, var(--accent-rainbow) border-box; }
 .tb-btn:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
 .tb-btn.has-notification::after { content: ''; position: absolute; top: 6px; right: 6px; width: var(--sp-2); height: var(--sp-2); border-radius: var(--r-circle); background: var(--accent); animation: dot-pulse 1.5s ease-in-out infinite; }
 /* Force-mute alert: smooth glow that fades in and out on the mic button.
@@ -1447,7 +1447,7 @@ body.has-focus.strip-hidden #stage-strip {
 <div id="landing-screen" class="hidden">
     <div class="panel-box">
         <img src="" alt="" class="screen-logo u-hidden">
-        <div class="brand-wordmark brand-fallback u-hidden">Farbstrom</div>
+        <div class="brand-wordmark brand-fallback u-hidden">MINSARA</div>
         <div class="landing-title">Welcome</div>
         <div class="landing-sub">It appears you forgot the room link for your project. Please enter your room link below or ask your host for the correct URL.</div>
         <div class="form-row">
@@ -1463,7 +1463,7 @@ body.has-focus.strip-hidden #stage-strip {
 <div id="join-screen" class="screen hidden">
     <div class="panel-box panel-box-md join-box">
         <img src="" alt="" class="screen-logo u-hidden">
-        <div class="brand-wordmark brand-fallback u-hidden">Farbstrom</div>
+        <div class="brand-wordmark brand-fallback u-hidden">MINSARA</div>
         <div class="join-room-name" id="join-room-name">Loading...</div>
         <form id="join-form">
             <div class="form-row">
@@ -1485,7 +1485,7 @@ body.has-focus.strip-hidden #stage-strip {
 <div id="waiting-screen" class="screen hidden">
     <div class="panel-box panel-box-md waiting-box">
         <img src="" alt="" class="screen-logo u-hidden">
-        <div class="brand-wordmark brand-fallback u-hidden">Farbstrom</div>
+        <div class="brand-wordmark brand-fallback u-hidden">MINSARA</div>
         <div class="waiting-label">Waiting Room</div>
         <div class="waiting-name" id="waiting-name"></div>
         <div class="waiting-msg">Waiting for the host to admit you<span class="dot-anim"></span></div>
@@ -1496,7 +1496,7 @@ body.has-focus.strip-hidden #stage-strip {
 <div id="scheduled-screen" class="screen hidden">
     <div class="panel-box panel-box-md waiting-box">
         <img src="" alt="" class="screen-logo u-hidden">
-        <div class="brand-wordmark brand-fallback u-hidden">Farbstrom</div>
+        <div class="brand-wordmark brand-fallback u-hidden">MINSARA</div>
         <div class="waiting-label">Scheduled</div>
         <div class="waiting-name" id="scheduled-name"></div>
         <div class="waiting-msg">This session starts on <span id="scheduled-when"></span></div>
@@ -1508,7 +1508,7 @@ body.has-focus.strip-hidden #stage-strip {
 <div id="kicked-screen" class="screen hidden">
     <div class="panel-box panel-box-md waiting-box">
         <img src="" alt="" class="screen-logo u-hidden">
-        <div class="brand-wordmark brand-fallback u-hidden">Farbstrom</div>
+        <div class="brand-wordmark brand-fallback u-hidden">MINSARA</div>
         <div class="waiting-label" style="color:var(--danger)">Removed</div>
         <div class="waiting-name">You have been removed from this session.</div>
         <div class="waiting-msg">Contact the host if you believe this was a mistake.</div>
@@ -1519,7 +1519,7 @@ body.has-focus.strip-hidden #stage-strip {
 <div id="session-ended-screen" class="screen hidden">
     <div class="panel-box panel-box-md waiting-box">
         <img src="" alt="" class="screen-logo u-hidden">
-        <div class="brand-wordmark brand-fallback u-hidden">Farbstrom</div>
+        <div class="brand-wordmark brand-fallback u-hidden">MINSARA</div>
         <div class="waiting-label">Ended</div>
         <div class="waiting-name">This session has ended.</div>
         <div class="waiting-msg">Thanks for joining.</div>
@@ -1530,7 +1530,7 @@ body.has-focus.strip-hidden #stage-strip {
 <div id="left-screen" class="screen hidden">
     <div class="panel-box panel-box-md waiting-box">
         <img src="" alt="" class="screen-logo u-hidden">
-        <div class="brand-wordmark brand-fallback u-hidden">Farbstrom</div>
+        <div class="brand-wordmark brand-fallback u-hidden">MINSARA</div>
         <div class="waiting-name" id="left-room-name"></div>
         <div class="waiting-msg">You left the session.</div>
         <button class="join-btn u-mt-4" id="left-rejoin-btn">Rejoin</button>
@@ -1661,7 +1661,7 @@ body.has-focus.strip-hidden #stage-strip {
     <div id="top-bar">
         <div id="top-left">
             <img src="" alt="" class="brand-logo u-hidden">
-            <div class="brand-wordmark-sm brand-fallback u-hidden">Farbstrom</div>
+            <div class="brand-wordmark-sm brand-fallback u-hidden">MINSARA</div>
         </div>
         <div id="top-center">
             <span id="room-name-label"></span>
