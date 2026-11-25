@@ -1,4 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Farbstrom">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="MINSARA">
+  <defs>
+    <linearGradient id="r" x1="12" y1="50" x2="52" y2="14" gradientUnits="userSpaceOnUse">
+      <stop offset="0"    stop-color="#b77e85"/>
+      <stop offset="0.17" stop-color="#b88a68"/>
+      <stop offset="0.33" stop-color="#ae9d61"/>
+      <stop offset="0.5"  stop-color="#729a71"/>
+      <stop offset="0.67" stop-color="#519094"/>
+      <stop offset="0.83" stop-color="#7186b3"/>
+      <stop offset="1"    stop-color="#997fb8"/>
+    </linearGradient>
+  </defs>
   <rect width="64" height="64" rx="14" fill="#171717"/>
-  <path d="M22 16h22v8H30v8h12v8H30v16h-8z" fill="#ffbd2e"/>
+  <path d="M13 49V15h10l9 13.5L41 15h10v34h-9.5V31.5L32 45l-9.5-13.5V49z" fill="url(#r)"/>
 </svg>
